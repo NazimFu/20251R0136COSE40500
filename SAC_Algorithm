@@ -1,0 +1,77 @@
+class ReplayBuffer:
+    # def __init__(self, obs_dim: int, size: int, batch_size: int = 32): skip
+
+    def store(self, state, action, reward, next_state, done):
+        """Store a transition in the buffer."""
+        self.buffer["obs"][self.ptr] = state
+        self.buffer["acts"][self.ptr] = action
+        self.buffer["rews"][self.ptr] = reward
+        self.buffer["next_obs"][self.ptr] = next_state
+        self.buffer["done"][self.ptr] = done
+
+        self.ptr = (self.ptr + 1) % self.size  # Circular pointer
+        self.current_size = min(self.current_size + 1, self.size)
+
+    def sample_batch(self):
+        """Sample a batch of transitions."""
+        if self.current_size < self.batch_size:
+            raise ValueError("Not enough samples in ReplayBuffer.")
+        indices = np.random.choice(self.current_size, self.batch_size, replace=False)
+        return {key: self.buffer[key][indices] for key in self.buffer}
+
+    def __len__(self):
+        return self.current_size
+
+class Actor(nn.Module):
+    def __init__(self, in_dim: int, out_dim: int, log_std_min: float = -20, log_std_max: float = 2):
+        # Define network layers
+        self.hidden1 = nn.Linear(in_dim, 256)
+        self.hidden2 = nn.Linear(256, 256)
+        self.log_std_layer = init_layer_uniform(nn.Linear(256, out_dim))
+        self.mu_layer = init_layer_uniform(nn.Linear(256, out_dim))
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        x = F.relu(self.hidden1(state))
+        x = F.relu(self.hidden2(x))
+
+        # Compute mean and log standard deviation
+        mu = self.mu_layer(x).tanh()
+        log_std = self.log_std_layer(x).tanh()
+        log_std = self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (log_std + 1)
+        std = torch.exp(log_std)
+
+        # Action distribution and sampling
+        dist = Normal(mu, std)
+        z = dist.rsample()
+        action = z.tanh()
+        log_prob = dist.log_prob(z) - torch.log(1 - action.pow(2) + 1e-7)
+        log_prob = log_prob.sum(-1, keepdim=True)
+
+        return action, log_prob
+
+class CriticQ(nn.Module):
+    def __init__(self, in_dim: int):
+        super(CriticQ, self).__init__()
+        self.hidden1 = nn.Linear(in_dim, 256)
+        self.hidden2 = nn.Linear(256, 256)
+        self.out = init_layer_uniform(nn.Linear(256, 1))
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        """Forward method implementation."""
+        x = torch.cat((state, action), dim=-1)
+        x = F.relu(self.hidden1(x))
+        x = F.relu(self.hidden2(x))
+        return self.out(x)
+
+class CriticV(nn.Module):
+    def __init__(self, in_dim: int):
+        super(CriticV, self).__init__()
+        self.hidden1 = nn.Linear(in_dim, 256)
+        self.hidden2 = nn.Linear(256, 256)
+        self.out = init_layer_uniform(nn.Linear(256, 1))
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        x = F.relu(self.hidden1(state))
+        x = F.relu(self.hidden2(x))
+        return self.out(x)
+
